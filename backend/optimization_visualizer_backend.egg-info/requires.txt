@@ -1,0 +1,10 @@
+cvxpy
+fastapi
+numpy
+pydantic
+scipy
+uvicorn[standard]
+
+[dev]
+pytest
+httpx

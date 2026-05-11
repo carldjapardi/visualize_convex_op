@@ -1,0 +1,26 @@
+{
+  "name": "optimization-visualizer-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "plotly.js-dist-min": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-plotly.js": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/plotly.js": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/react-plotly.js": "latest",
+    "typescript": "latest"
+  }
+}
