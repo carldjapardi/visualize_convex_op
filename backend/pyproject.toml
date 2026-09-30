@@ -1,14 +1,12 @@
 [project]
 name = "optimization-visualizer-backend"
-version = "0.1.0"
-description = "FastAPI backend for visualizing convex optimization problems and solver methods."
+version = "0.2.0"
+description = "FastAPI backend for visualizing convex optimization problems with educational solvers."
 requires-python = ">=3.11"
 dependencies = [
-  "cvxpy",
   "fastapi",
   "numpy",
   "pydantic",
-  "scipy",
   "uvicorn[standard]",
 ]
 

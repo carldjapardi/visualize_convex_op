@@ -10,8 +10,8 @@ from .schemas import GeometryRequest, GeometryResponse, MethodSummary, ProblemSu
 
 app = FastAPI(
     title="Optimization Visualizer API",
-    description="Solve and visualize LP, QP, QCQP, SOCP, and SDP examples.",
-    version="0.1.0",
+    description="Solve and visualize LP, QP, QCQP, SOCP, and SDP examples with educational solvers.",
+    version="0.2.0",
 )
 
 app.add_middleware(

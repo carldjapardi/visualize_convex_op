@@ -10,6 +10,8 @@ export interface ProblemSummary {
   variables: string[];
   compatible_methods: MethodId[];
   constraints: string[];
+  objective_expression: string;
+  learning_goal: string;
 }
 
 export interface MethodSummary {

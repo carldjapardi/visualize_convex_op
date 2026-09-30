@@ -1,417 +1,359 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import type { Data, Layout } from "plotly.js";
 
-import type { GeometryResponse, SolveResponse } from "../types";
+import type { GeometryResponse, Iterate, SolveResponse } from "../types";
 
 type PlotProps = {
   className?: string;
   data: Data[];
   layout: Partial<Layout>;
   config?: object;
+  style?: CSSProperties;
+  useResizeHandler?: boolean;
 };
-
 type PlotComponent = ComponentType<PlotProps>;
+type PlotView = "contours" | "value-map" | "surface";
 
-interface ProblemPlotProps {
+const VIEWS: Array<{ id: PlotView; label: string }> = [
+  { id: "contours", label: "2D contours" },
+  { id: "value-map", label: "Value map" },
+  { id: "surface", label: "3D surface" },
+];
+const INK = "#203330";
+const PATH = "#ec744d";
+const EDGE = "#bc6044";
+
+export function ProblemPlot({
+  geometry,
+  result,
+  loading,
+}: {
   geometry: GeometryResponse | null;
   result: SolveResponse | null;
-}
-
-type PlotView = "level-curves" | "actual-graph" | "surface-3d";
-
-const PLOT_VIEW_OPTIONS: Array<{ value: PlotView; label: string }> = [
-  { value: "level-curves", label: "2D level curves" },
-  { value: "actual-graph", label: "Actual graph" },
-  { value: "surface-3d", label: "3D graph" },
-];
-
-const PLOT_TEXT_COLOR = "#111827";
-
-export function ProblemPlot({ geometry, result }: ProblemPlotProps) {
+  loading: boolean;
+}) {
   const { Plot, error } = usePlotlyComponent();
-  const [plotView, setPlotView] = useState<PlotView>("level-curves");
-  const plotGeometry = result?.geometry ?? geometry;
+  const [view, setView] = useState<PlotView>("contours");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 700px)").matches);
+  const inspectorRef = useRef<HTMLElement | null>(null);
 
-  if (!plotGeometry) {
-    return <div className="empty-state">Loading optimization geometry...</div>;
-  }
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 700px)");
+    const update = () => setCompact(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
-  if (error) {
-    return <div className="empty-state">Plot renderer failed to load: {error}</div>;
-  }
+  useLayoutEffect(() => {
+    setActiveIndex(Math.max(0, (result?.trace.length ?? 1) - 1));
+  }, [result]);
 
-  if (!Plot) {
-    return <div className="empty-state">Loading plot renderer...</div>;
-  }
-
-  const traces =
-    plotView === "surface-3d"
-      ? buildSurfaceTraces(plotGeometry, result)
-      : buildPlanarTraces(plotGeometry, result, plotView);
-  const layout =
-    plotView === "surface-3d"
-      ? buildSurfaceLayout(plotGeometry)
-      : buildPlanarLayout(plotGeometry, plotView);
+  const trace = result?.trace ?? [];
+  const index = Math.min(activeIndex, Math.max(0, trace.length - 1));
+  const visibleTrace = trace.slice(0, index + 1);
+  const current = trace[index];
+  const data = geometry
+    ? view === "surface"
+      ? buildSurfaceTraces(geometry, visibleTrace, compact)
+      : buildPlanarTraces(geometry, visibleTrace, view)
+    : [];
+  const layout = geometry
+    ? view === "surface" ? surfaceLayout(geometry, compact) : planarLayout(geometry, view, compact)
+    : {};
 
   return (
     <div className="plot-stack">
       <div className="plot-toolbar">
         <div>
-          <h2>Visualization</h2>
-          <p>{viewDescription(plotView)}</p>
+          <span className="section-number">02</span>
+          <div><h2>Explore the geometry</h2><p>{viewDescription(view)}</p></div>
         </div>
-        <label>
-          View
-          <select value={plotView} onChange={(event) => setPlotView(event.target.value as PlotView)}>
-            {PLOT_VIEW_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <Plot className="plot" data={traces} layout={layout} config={{ responsive: true, displayModeBar: true }} />
-      {plotGeometry.annotations.length > 0 && (
-        <div className="annotation-list">
-          {plotGeometry.annotations.map((annotation) => (
-            <span key={annotation}>{annotation}</span>
+        <div className="view-switch" role="group" aria-label="Visualization view">
+          {VIEWS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={view === option.id ? "view-button active" : "view-button"}
+              aria-pressed={view === option.id}
+              onClick={() => setView(option.id)}
+            >{option.label}</button>
           ))}
         </div>
+      </div>
+
+      {error ? (
+        <div className="plot-empty" role="alert">The plot renderer could not load: {error}</div>
+      ) : !geometry || !Plot ? (
+        <div className="plot-empty">{loading ? "Computing the objective and feasible region…" : "Loading visualization…"}</div>
+      ) : (
+        <div className={view === "surface" ? "plot-body surface-layout" : "plot-body"}>
+          <div className="plot-frame">
+            <Plot
+              className="plot"
+              data={data}
+              layout={layout}
+              useResizeHandler
+              style={{ width: "100%", height: "100%" }}
+              config={{ responsive: true, displayModeBar: true, displaylogo: false, scrollZoom: false }}
+            />
+          </div>
+          <button className="scroll-to-inspector" type="button" onClick={() => inspectorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>Continue to path inspector ↓</button>
+          <aside className="trace-inspector" aria-label="Iteration inspector" ref={inspectorRef}>
+            <h3>Inspect the path</h3>
+            <p className="inspector-intro">Slide through the steps to see where the method moved.</p>
+            {current ? (
+              <>
+                <div className="iteration-header"><span>Iteration</span><strong>{current.iteration} <small>/ {trace.length - 1}</small></strong></div>
+                <input
+                  className="iteration-range"
+                  type="range"
+                  min={0}
+                  max={trace.length - 1}
+                  value={index}
+                  aria-label="Iteration"
+                  onChange={(event) => setActiveIndex(Number(event.target.value))}
+                />
+                <div className="iteration-actions">
+                  <button type="button" onClick={() => setActiveIndex(0)} disabled={index === 0}>Start</button>
+                  <button type="button" onClick={() => setActiveIndex(trace.length - 1)} disabled={index === trace.length - 1}>Final step</button>
+                </div>
+                <dl className="point-metrics">
+                  <div><dt>Objective</dt><dd>{formatNumber(current.objective)}</dd></div>
+                  <div><dt>Violation</dt><dd className={current.violation > 1e-5 ? "metric-alert" : ""}>{formatNumber(current.violation)}</dd></div>
+                  <div><dt>{geometry.problem_type === "sdp" ? "a, b" : "x, y"}</dt><dd>{current.x.map(formatNumber).join(", ")}</dd></div>
+                </dl>
+                {current.violation > 1e-5 && <p className="violation-note">This step lies outside the feasible region.</p>}
+              </>
+            ) : (
+              <div className="inspector-empty">Run a method to reveal its path. The colored region contains points that meet every constraint.</div>
+            )}
+            <div className="inspector-legend">
+              <span><i className={view === "surface" ? "legend-swatch feasible-surface" : "legend-swatch feasible"} />Feasible</span>
+              <span><i className="legend-swatch path" />Method path</span>
+              {view !== "surface" && <span><i className="legend-swatch boundary" />Boundary</span>}
+            </div>
+          </aside>
+        </div>
       )}
-      {result && <HistoryPlot Plot={Plot} result={result} />}
+
+      {geometry?.annotations.length ? <div className="annotation-list">{geometry.annotations.map((note) => <span key={note}>{note}</span>)}</div> : null}
+      {result && Plot && <HistoryPlot Plot={Plot} result={result} activeIteration={current?.iteration ?? 0} />}
     </div>
   );
 }
 
-function buildPlanarTraces(geometry: GeometryResponse, result: SolveResponse | null, plotView: PlotView): Data[] {
-  const traces: Data[] =
-    plotView === "actual-graph"
-      ? [
-          {
-            type: "heatmap",
-            x: geometry.x,
-            y: geometry.y,
-            z: geometry.objective,
-            colorscale: "Viridis",
-            colorbar: {
-              title: { text: "objective" },
-              tickfont: { color: PLOT_TEXT_COLOR },
-              titlefont: { color: PLOT_TEXT_COLOR },
-            },
-            hovertemplate: "x=%{x}<br>y=%{y}<br>f=%{z}<extra>Objective</extra>",
-            name: "Objective value",
-          } as Data,
-          feasibleRegionTrace(geometry, 0.2),
-        ]
-      : [
-          feasibleRegionTrace(geometry, 0.18),
-          {
-            type: "contour",
-            x: geometry.x,
-            y: geometry.y,
-            z: geometry.objective,
-            colorscale: [
-              [0, "#2563eb"],
-              [0.5, "#7c3aed"],
-              [1, "#be123c"],
-            ],
-            contours: {
-              coloring: "lines",
-              showlabels: true,
-              labelfont: { color: PLOT_TEXT_COLOR, size: 11 },
-            },
-            line: { width: 2.4 },
-            opacity: 0.98,
-            showscale: false,
-            name: "Objective contours",
-          } as Data,
-        ];
-
+function buildPlanarTraces(geometry: GeometryResponse, path: Iterate[], view: PlotView): Data[] {
+  const traces: Data[] = view === "value-map"
+    ? [
+        {
+          type: "heatmap", x: geometry.x, y: geometry.y, z: geometry.objective,
+          colorscale: "Viridis", colorbar: { title: { text: "objective" } },
+          hovertemplate: "x=%{x}<br>y=%{y}<br>f=%{z:.3f}<extra></extra>",
+        } as Data,
+        feasibleRegionTrace(geometry, 0.25),
+      ]
+    : [
+        feasibleRegionTrace(geometry, 0.27),
+        {
+          type: "contour", x: geometry.x, y: geometry.y, z: geometry.objective,
+          contours: { coloring: "lines", showlabels: true, labelfont: { color: INK, size: 11 } },
+          colorscale: [[0, "#159985"], [0.5, "#3b79a9"], [1, "#7953a6"]],
+          line: { width: 2 }, showscale: false,
+          hovertemplate: "f=%{z:.3f}<extra>Objective contour</extra>",
+        } as Data,
+      ];
   traces.push(...boundaryTraces(geometry));
 
-  if (result?.trace.length) {
+  if (path.length) {
     traces.push({
-      type: "scatter",
-      mode: "lines+markers",
-      x: result.trace.map((point) => point.x[0]),
-      y: result.trace.map((point) => point.x[1]),
-      marker: { size: 9, color: "#ff6b35", line: { color: PLOT_TEXT_COLOR, width: 1.5 } },
-      line: { width: 3.5, color: "#ff6b35" },
-      name: "Method trace",
-      text: result.trace.map(
-        (point) =>
-          `iter ${point.iteration}<br>objective ${point.objective.toFixed(4)}<br>violation ${point.violation.toExponential(2)}`,
-      ),
+      type: "scatter", mode: "lines+markers",
+      x: path.map((point) => point.x[0]), y: path.map((point) => point.x[1]),
+      line: { color: PATH, width: 3.5 },
+      marker: { color: PATH, size: 6, line: { color: "#fff", width: 1 } },
+      name: "Method path",
+      text: path.map((point) => "iteration " + point.iteration + "<br>f=" + formatNumber(point.objective)),
       hoverinfo: "text",
-    });
+    } as Data);
+    const current = path[path.length - 1];
+    traces.push({
+      type: "scatter", mode: "markers",
+      x: [current.x[0]], y: [current.x[1]],
+      marker: { color: PATH, size: 15, line: { color: "#fff", width: 3 } },
+      name: "Selected step",
+      hovertemplate: "iteration " + current.iteration + "<br>f=" + formatNumber(current.objective) + "<extra></extra>",
+    } as Data);
   }
-
   return traces;
 }
 
-function buildSurfaceTraces(geometry: GeometryResponse, result: SolveResponse | null): Data[] {
+function buildSurfaceTraces(geometry: GeometryResponse, path: Iterate[], compact: boolean): Data[] {
+  const [low, high] = feasibleRange(geometry);
+  const pathLift = Math.max(0.08, (high - low) * 0.025);
+  const feasibleZ = geometry.objective.map((row, y) =>
+    row.map((value, x) => geometry.feasible[y]?.[x] ? value : null),
+  );
   const traces: Data[] = [
     {
-      type: "surface",
-      x: geometry.x,
-      y: geometry.y,
-      z: geometry.objective,
-      colorscale: "Viridis",
-      opacity: 0.94,
-      colorbar: {
-        title: { text: "objective" },
-        tickfont: { color: PLOT_TEXT_COLOR },
-        titlefont: { color: PLOT_TEXT_COLOR },
-      },
-      contours: {
-        z: {
-          show: true,
-          usecolormap: true,
-          highlightcolor: "#ffffff",
-          project: { z: true },
-        },
-      },
-      name: "Objective surface",
+      type: "surface", x: geometry.x, y: geometry.y, z: geometry.objective,
+      colorscale: [[0, "#d9e0df"], [1, "#aab8b5"]], opacity: 0.33,
+      showscale: false, hoverinfo: "skip", name: "Full objective",
+    } as Data,
+    {
+      type: "surface", x: geometry.x, y: geometry.y, z: feasibleZ,
+      colorscale: "Viridis", opacity: 0.88, showscale: !compact,
+      colorbar: { title: { text: "objective" }, tickfont: { color: INK } },
+      hovertemplate: "x=%{x}<br>y=%{y}<br>f=%{z:.3f}<extra>Feasible surface</extra>",
+      name: "Feasible objective",
     } as Data,
   ];
-
-  const feasiblePoints = feasibleSurfacePoints(geometry);
-  if (feasiblePoints.x.length) {
+  if (path.length) {
     traces.push({
-      type: "scatter3d",
-      mode: "markers",
-      x: feasiblePoints.x,
-      y: feasiblePoints.y,
-      z: feasiblePoints.z,
-      marker: { size: 2.6, color: "#42f59e", opacity: 0.8 },
-      name: "Feasible samples",
-      hoverinfo: "skip",
-    } as Data);
-  }
-
-  if (result?.trace.length) {
-    traces.push({
-      type: "scatter3d",
-      mode: "lines+markers",
-      x: result.trace.map((point) => point.x[0]),
-      y: result.trace.map((point) => point.x[1]),
-      z: result.trace.map((point) => objectiveAtNearest(geometry, point.x[0], point.x[1])),
-      marker: { size: 5, color: "#ff6b35", line: { color: PLOT_TEXT_COLOR, width: 1 } },
-      line: { width: 5, color: "#ff6b35" },
-      name: "Method trace",
-      text: result.trace.map(
-        (point) =>
-          `iter ${point.iteration}<br>objective ${point.objective.toFixed(4)}<br>violation ${point.violation.toExponential(2)}`,
-      ),
+      type: "scatter3d", mode: "lines+markers",
+      x: path.map((point) => point.x[0]),
+      y: path.map((point) => point.x[1]),
+      z: path.map((point) => point.objective + pathLift),
+      line: { color: PATH, width: 6 },
+      marker: { color: PATH, size: 5 },
+      name: "Method path",
+      text: path.map((point) => "iteration " + point.iteration + "<br>f=" + formatNumber(point.objective)),
       hoverinfo: "text",
     } as Data);
+    const current = path[path.length - 1];
+    traces.push({
+      type: "scatter3d", mode: "markers",
+      x: [current.x[0]], y: [current.x[1]], z: [current.objective + pathLift],
+      marker: { color: PATH, size: 10, line: { color: "#fff", width: 2 } },
+      name: "Selected step", hoverinfo: "skip",
+    } as Data);
   }
-
   return traces;
 }
 
 function feasibleRegionTrace(geometry: GeometryResponse, opacity: number): Data {
   return {
-    type: "heatmap",
-    x: geometry.x,
-    y: geometry.y,
-    z: geometry.feasible.map((row) => row.map((value) => (value ? 1 : null))),
-    colorscale: [
-      [0, "rgba(55, 214, 139, 0.04)"],
-      [1, "rgba(55, 214, 139, 0.95)"],
-    ],
-    opacity,
-    showscale: false,
-    hoverinfo: "skip",
-    name: "Feasible region",
+    type: "heatmap", x: geometry.x, y: geometry.y,
+    z: geometry.feasible.map((row) => row.map((value) => value ? 1 : null)),
+    colorscale: [[0, "#46cfab"], [1, "#46cfab"]], opacity,
+    showscale: false, hoverinfo: "skip", name: "Feasible region",
   } as Data;
 }
 
 function boundaryTraces(geometry: GeometryResponse): Data[] {
-  return geometry.boundaries.map(
-    (boundary): Data =>
-      ({
-        type: "scatter",
-        mode: "lines",
-        x: boundary.x,
-        y: boundary.y,
-        line: { width: 3, color: "#9a3412", dash: "dot" },
-        name: boundary.name,
-      }) as Data,
-  );
+  return geometry.boundaries.map((boundary) => ({
+    type: "scatter", mode: "lines", x: boundary.x, y: boundary.y,
+    line: { width: 2.5, color: EDGE, dash: "dash" },
+    name: boundary.name, hoverinfo: "name",
+  } as Data));
 }
 
-function buildPlanarLayout(geometry: GeometryResponse, plotView: PlotView): Partial<Layout> {
+function planarLayout(geometry: GeometryResponse, view: PlotView, compact: boolean): Partial<Layout> {
   return {
-    autosize: true,
-    height: 560,
-    margin: { l: 56, r: plotView === "actual-graph" ? 72 : 28, t: 24, b: 54 },
-    paper_bgcolor: "#ffffff",
-    plot_bgcolor: "#ffffff",
-    font: { color: PLOT_TEXT_COLOR },
-    xaxis: planarAxis(axisLabels(geometry).x),
-    yaxis: { ...planarAxis(axisLabels(geometry).y), scaleanchor: "x" },
-    legend: { orientation: "h", y: -0.18, font: { color: PLOT_TEXT_COLOR } },
+    autosize: true, height: compact ? 430 : 520, uirevision: geometry.problem_id,
+    margin: { l: compact ? 48 : 64, r: view === "value-map" ? (compact ? 50 : 72) : 22, t: 20, b: compact ? 44 : 56 },
+    paper_bgcolor: "#fff", plot_bgcolor: "#fff",
+    font: { color: INK, family: "Inter, system-ui, sans-serif" },
+    showlegend: false,
+    xaxis: { ...axis(geometry.problem_type === "sdp" ? "a = X₀₀" : "x"), range: [geometry.x[0], geometry.x[geometry.x.length - 1]] },
+    yaxis: { ...axis(geometry.problem_type === "sdp" ? "b = X₀₁" : "y"), range: [geometry.y[0], geometry.y[geometry.y.length - 1]], scaleanchor: "x", scaleratio: 1 },
   };
 }
 
-function buildSurfaceLayout(geometry: GeometryResponse): Partial<Layout> {
+function surfaceLayout(geometry: GeometryResponse, compact: boolean): Partial<Layout> {
+  const [low, high] = feasibleRange(geometry);
+  const margin = Math.max(0.5, (high - low) * 0.16);
   return {
-    autosize: true,
-    height: 620,
-    margin: { l: 0, r: 0, t: 12, b: 0 },
-    paper_bgcolor: "#ffffff",
-    plot_bgcolor: "#ffffff",
-    font: { color: PLOT_TEXT_COLOR },
-    legend: { orientation: "h", y: 0, font: { color: PLOT_TEXT_COLOR } },
+    autosize: true, height: compact ? 460 : 610, uirevision: geometry.problem_id,
+    margin: { l: 0, r: 0, t: 8, b: 0 },
+    paper_bgcolor: "#fff", plot_bgcolor: "#fff",
+    font: { color: INK, family: "Inter, system-ui, sans-serif" },
+    showlegend: false,
     scene: {
-      bgcolor: "#ffffff",
-      xaxis: surfaceAxis(axisLabels(geometry).x),
-      yaxis: surfaceAxis(axisLabels(geometry).y),
-      zaxis: surfaceAxis("objective"),
-      camera: { eye: { x: 1.55, y: 1.55, z: 1.05 } },
+      bgcolor: "#fff", aspectmode: "manual", aspectratio: { x: 1, y: 1, z: 0.68 },
+      xaxis: sceneAxis(geometry.problem_type === "sdp" ? "a = X₀₀" : "x"),
+      yaxis: sceneAxis(geometry.problem_type === "sdp" ? "b = X₀₁" : "y"),
+      zaxis: { ...sceneAxis("objective"), range: [low - margin, high + margin] },
+      camera: { eye: compact ? { x: 1.45, y: 1.55, z: 1.1 } : { x: 1.2, y: 1.35, z: 0.9 } },
     },
   };
 }
 
-function planarAxis(title: string) {
-  return {
-    title: { text: title },
-    gridcolor: "rgba(17, 24, 39, 0.12)",
-    linecolor: "rgba(17, 24, 39, 0.5)",
-    tickcolor: "rgba(17, 24, 39, 0.5)",
-    zeroline: true,
-    zerolinecolor: "rgba(17, 24, 39, 0.32)",
-  };
-}
-
-function surfaceAxis(title: string) {
-  return {
-    title: { text: title },
-    color: PLOT_TEXT_COLOR,
-    gridcolor: "rgba(17, 24, 39, 0.12)",
-    linecolor: "rgba(17, 24, 39, 0.5)",
-    zerolinecolor: "rgba(17, 24, 39, 0.32)",
-  };
-}
-
-function axisLabels(geometry: GeometryResponse) {
-  return geometry.problem_type === "sdp" ? { x: "a = X00", y: "b = X01" } : { x: "x", y: "y" };
-}
-
-function feasibleSurfacePoints(geometry: GeometryResponse) {
-  const x: number[] = [];
-  const y: number[] = [];
-  const z: number[] = [];
-  const stride = Math.max(1, Math.floor(geometry.x.length / 36));
-
-  for (let rowIndex = 0; rowIndex < geometry.y.length; rowIndex += stride) {
-    for (let columnIndex = 0; columnIndex < geometry.x.length; columnIndex += stride) {
-      const objective = geometry.objective[rowIndex]?.[columnIndex];
-      if (geometry.feasible[rowIndex]?.[columnIndex] && objective !== null && Number.isFinite(objective)) {
-        x.push(geometry.x[columnIndex]);
-        y.push(geometry.y[rowIndex]);
-        z.push(objective);
-      }
-    }
-  }
-
-  return { x, y, z };
-}
-
-function objectiveAtNearest(geometry: GeometryResponse, xValue: number, yValue: number) {
-  const xIndex = nearestIndex(geometry.x, xValue);
-  const yIndex = nearestIndex(geometry.y, yValue);
-  return geometry.objective[yIndex]?.[xIndex] ?? 0;
-}
-
-function nearestIndex(values: number[], target: number) {
-  let bestIndex = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  values.forEach((value, index) => {
-    const distance = Math.abs(value - target);
-    if (distance < bestDistance) {
-      bestIndex = index;
-      bestDistance = distance;
-    }
-  });
-
-  return bestIndex;
-}
-
-function viewDescription(plotView: PlotView) {
-  if (plotView === "actual-graph") {
-    return "Objective values as a colored field with the feasible region and constraints overlaid.";
-  }
-  if (plotView === "surface-3d") {
-    return "The sampled objective surface, with feasible points and solver trace lifted into 3D.";
-  }
-  return "Default view: high-contrast objective level curves over the feasible region.";
-}
-
-function HistoryPlot({ Plot, result }: { Plot: PlotComponent; result: SolveResponse }) {
-  const objectiveHistory = result.history.objective;
-  const violationHistory = result.history.violation;
-  const eigenvalues = result.history.eigenvalues;
-  const traces: Data[] = [];
-
-  if (objectiveHistory?.length) {
-    traces.push({
-      type: "scatter",
-      mode: "lines+markers",
-      x: objectiveHistory.map((_, index) => index),
-      y: objectiveHistory,
-      name: "Objective",
-      line: { color: "#4c6fff", width: 3 },
-    });
-  }
-
-  if (violationHistory?.length) {
-    traces.push({
-      type: "scatter",
-      mode: "lines+markers",
-      x: violationHistory.map((_, index) => index),
-      y: violationHistory,
-      yaxis: "y2",
-      name: "Violation",
-      line: { color: "#e05263", width: 2 },
-    });
-  }
-
-  if (eigenvalues?.length) {
-    traces.push({
-      type: "bar",
-      x: eigenvalues.map((_, index) => `lambda ${index + 1}`),
-      y: eigenvalues,
-      name: "PSD eigenvalues",
-      marker: { color: "#43aa8b" },
-    });
-  }
-
-  if (traces.length === 0) {
-    return null;
-  }
-
-  return (
-    <Plot
-      className="history-plot"
-      data={traces}
-      layout={{
-        height: 260,
-        margin: { l: 48, r: 48, t: 20, b: 44 },
-        paper_bgcolor: "#ffffff",
-        plot_bgcolor: "#ffffff",
-        font: { color: PLOT_TEXT_COLOR },
-        xaxis: planarAxis("iteration"),
-        yaxis: planarAxis("Objective / eigenvalue"),
-        yaxis2: { ...planarAxis("Violation"), overlaying: "y", side: "right", showgrid: false },
-        legend: { orientation: "h", y: -0.22, font: { color: PLOT_TEXT_COLOR } },
-      }}
-      config={{ responsive: true, displayModeBar: false }}
-    />
+function feasibleRange(geometry: GeometryResponse): [number, number] {
+  const values = geometry.objective.flatMap((row, y) =>
+    row.filter((value, x): value is number => Boolean(geometry.feasible[y]?.[x]) && value !== null),
   );
+  return values.length ? [Math.min(...values), Math.max(...values)] : [0, 1];
+}
+
+function axis(title: string) {
+  return {
+    title: { text: title }, gridcolor: "#e7eeea",
+    linecolor: "#a8b8b1", zerolinecolor: "#cbd8d2",
+  };
+}
+
+function sceneAxis(title: string) {
+  return {
+    title: { text: title }, color: INK,
+    gridcolor: "#e7eeea", linecolor: "#a8b8b1",
+    zerolinecolor: "#cbd8d2",
+  };
+}
+
+function viewDescription(view: PlotView) {
+  if (view === "surface") return "Drag to rotate. Height is objective value (lower is better); the orange path is raised for visibility.";
+  if (view === "value-map") return "Color shows objective value; the green overlay satisfies every constraint.";
+  return "Curves connect equal objective values. The green area satisfies every constraint.";
+}
+
+function HistoryPlot({
+  Plot, result, activeIteration,
+}: {
+  Plot: PlotComponent; result: SolveResponse; activeIteration: number;
+}) {
+  const iterations = result.trace.map((point) => point.iteration);
+  const hasViolation = result.trace.some((point) => point.violation > 1e-5);
+  const data: Data[] = [{
+    type: "scatter", mode: "lines", x: iterations,
+    y: result.trace.map((point) => point.objective),
+    line: { color: "#137e76", width: 3 }, name: "Objective",
+  } as Data];
+  if (hasViolation) {
+    data.push({
+      type: "scatter", mode: "lines", x: iterations,
+      y: result.trace.map((point) => point.violation),
+      yaxis: "y2", line: { color: PATH, width: 2 }, name: "Constraint violation",
+    } as Data);
+  }
+  return (
+    <div className="history-section">
+      <div className="history-heading"><h3>Across the run</h3><p>Objective value{hasViolation ? " and constraint violation" : ""} at each iteration.</p></div>
+      <Plot
+        className="history-plot" data={data} useResizeHandler
+        style={{ width: "100%", height: "100%" }}
+        layout={{
+          autosize: true, height: 220, uirevision: "history",
+          margin: { l: 62, r: hasViolation ? 62 : 20, t: 14, b: 44 },
+          paper_bgcolor: "#fff", plot_bgcolor: "#fff",
+          font: { color: INK, family: "Inter, system-ui, sans-serif" },
+          xaxis: axis("iteration"), yaxis: axis("objective"),
+          yaxis2: { ...axis("violation"), overlaying: "y", side: "right", showgrid: false },
+          legend: { orientation: "h", y: 1.26 },
+          shapes: [{
+            type: "line", x0: activeIteration, x1: activeIteration, y0: 0, y1: 1,
+            xref: "x", yref: "paper", line: { color: PATH, width: 2, dash: "dot" },
+          }],
+        }}
+        config={{ responsive: true, displayModeBar: false }}
+      />
+    </div>
+  );
+}
+
+function formatNumber(value: number) {
+  if (Math.abs(value) < 0.00005) return "0";
+  if (Math.abs(value) < 0.001 || Math.abs(value) >= 10000) return value.toExponential(2);
+  return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 function usePlotlyComponent() {
@@ -420,30 +362,18 @@ function usePlotlyComponent() {
 
   useEffect(() => {
     let cancelled = false;
-
     Promise.all([import("plotly.js-dist-min"), import("react-plotly.js/factory")])
       .then(([plotlyModule, factoryModule]) => {
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         const factoryDefault = factoryModule.default as unknown as
           | ((plotly: unknown) => PlotComponent)
           | { default: (plotly: unknown) => PlotComponent };
-        const createPlotlyComponent =
-          typeof factoryDefault === "function" ? factoryDefault : factoryDefault.default;
-        const plotly =
-          (plotlyModule as { default?: unknown }).default ?? (plotlyModule as unknown);
-        setPlot(() => createPlotlyComponent(plotly) as PlotComponent);
+        const create = typeof factoryDefault === "function" ? factoryDefault : factoryDefault.default;
+        const plotly = (plotlyModule as { default?: unknown }).default ?? plotlyModule;
+        setPlot(() => create(plotly));
       })
-      .catch((caught: Error) => {
-        if (!cancelled) {
-          setError(caught.message);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+      .catch((caught: Error) => { if (!cancelled) setError(caught.message); });
+    return () => { cancelled = true; };
   }, []);
 
   return { Plot, error };

@@ -18,6 +18,8 @@ class ProblemSummary(BaseModel):
     variables: list[str]
     compatible_methods: list[MethodId]
     constraints: list[str]
+    objective_expression: str
+    learning_goal: str
 
 
 class MethodSummary(BaseModel):
