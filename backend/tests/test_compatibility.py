@@ -8,12 +8,12 @@ from app.methods import solve
 from app.schemas import SolveRequest
 
 
-def test_twenty_five_problems():
-    assert len(PROBLEMS) == 25
+def test_problem_family_counts():
+    assert len(PROBLEMS) == 23
     by_type: dict[str, int] = {}
     for problem in PROBLEMS.values():
         by_type[problem.type] = by_type.get(problem.type, 0) + 1
-    assert by_type == {"lp": 5, "qp": 5, "qcqp": 5, "socp": 5, "sdp": 5}
+    assert by_type == {"lp": 5, "qp": 5, "qcqp": 4, "socp": 3, "sdp": 3, "nonconvex": 3}
 
 
 def test_simplex_only_on_lp():
@@ -54,6 +54,6 @@ def test_lp_simplex_solves():
 
 
 def test_qcqp_no_simplex_in_catalog():
-    for pid in ("qcqp-intersection", "qcqp-naive-gd"):
+    for pid in ("qcqp-intersection", "qcqp-ellipse-box"):
         problem = get_problem(pid)
         assert "simplex" not in problem.compatible_methods

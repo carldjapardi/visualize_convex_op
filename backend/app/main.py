@@ -10,7 +10,7 @@ from .schemas import GeometryRequest, GeometryResponse, MethodSummary, ProblemSu
 
 app = FastAPI(
     title="Optimization Visualizer API",
-    description="Solve and visualize LP, QP, QCQP, SOCP, and SDP examples with educational solvers.",
+    description="Explore convex program families and nonconvex landscapes with educational solvers.",
     version="0.2.0",
 )
 

@@ -69,22 +69,4 @@ def build_sdp_problems() -> dict[str, ProblemDefinition]:
             np.array([0.7, 0.1]),
             ((-0.1, 1.1), (-0.65, 0.65)),
         ),
-        "sdp-narrow-cone": _make_sdp(
-            "sdp-narrow-cone",
-            "SDP: Boundary Zoom",
-            "A close view of the boundary of the same trace-one PSD slice.",
-            0.0,
-            -1.2,
-            np.array([0.02, 0.0]),
-            ((-0.05, 0.35), (-0.25, 0.25)),
-        ),
-        "sdp-wide-cone": _make_sdp(
-            "sdp-wide-cone",
-            "SDP: Interior Start",
-            "A different linear objective starting from the center of the PSD slice.",
-            -0.2,
-            0.4,
-            np.array([0.5, 0.0]),
-            ((-0.1, 1.1), (-0.65, 0.65)),
-        ),
     }

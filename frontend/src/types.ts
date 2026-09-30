@@ -1,4 +1,4 @@
-export type ProblemType = "lp" | "qp" | "qcqp" | "socp" | "sdp";
+export type ProblemType = "lp" | "qp" | "qcqp" | "socp" | "sdp" | "nonconvex";
 export type MethodId = "simplex" | "interior_point" | "gd" | "sgd" | "pgd" | "newton";
 
 export interface ProblemSummary {
@@ -12,6 +12,10 @@ export interface ProblemSummary {
   constraints: string[];
   objective_expression: string;
   learning_goal: string;
+  initial_point: number[];
+  plot_bounds: number[][];
+  default_step_size: number;
+  default_max_iterations: number;
 }
 
 export interface MethodSummary {
@@ -61,4 +65,5 @@ export interface SolveRequest {
   max_iterations: number;
   step_size: number;
   seed: number;
+  start_point?: [number, number];
 }

@@ -24,12 +24,12 @@ METHODS: dict[MethodId, dict[str, object]] = {
     "gd": {
         "name": "Gradient Descent",
         "description": "Educational first-order descent trace for smooth objectives.",
-        "best_for": ["qp", "qcqp"],
+        "best_for": ["qp", "qcqp", "nonconvex"],
     },
     "sgd": {
         "name": "Stochastic Gradient Descent",
         "description": "Noisy first-order descent trace for smooth objectives.",
-        "best_for": ["qp", "qcqp"],
+        "best_for": ["qp", "qcqp", "nonconvex"],
     },
     "pgd": {
         "name": "Projected Gradient Descent",
@@ -39,7 +39,7 @@ METHODS: dict[MethodId, dict[str, object]] = {
     "newton": {
         "name": "Newton's Method",
         "description": "Second-order educational trace using the local Hessian.",
-        "best_for": ["qp", "qcqp"],
+        "best_for": ["qp", "qcqp", "nonconvex"],
     },
 }
 

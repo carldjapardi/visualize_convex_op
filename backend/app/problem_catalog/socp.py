@@ -8,10 +8,8 @@ from .helpers import circle_boundary
 
 SOCP_RHS_COEFFICIENTS = {
     "socp-cone": (1.85, -0.25, 0.1),
-    "socp-robust-line": (1.2, -0.15, 0.2),
     "socp-hyperbolic": (0.5, 0.75, 0.0),
     "socp-norm-ball-intersect": (2.0, 0.0, 0.0),
-    "socp-portfolio-risk": (1.5, -0.3, 0.15),
 }
 
 
@@ -74,16 +72,6 @@ def build_socp_problems() -> dict[str, ProblemDefinition]:
             np.array([0.0, 0.0]),
             lambda: [],
         ),
-        "socp-robust-line": _make_socp(
-            "socp-robust-line",
-            "SOCP: Affine Norm Budget",
-            "A tighter affine budget changes the shape of the norm-feasible region.",
-            ["||(x, y)||_2 <= 1.2 - 0.15x + 0.2y"],
-            ((-1.8, 1.8), (-1.8, 1.8)),
-            np.array([-0.8, -1.1]),
-            np.array([0.1, 0.1]),
-            lambda: [circle_boundary(1.2)],
-        ),
         "socp-hyperbolic": _make_socp(
             "socp-hyperbolic",
             "SOCP: Steep Cone Section",
@@ -118,15 +106,5 @@ def build_socp_problems() -> dict[str, ProblemDefinition]:
             ),
             boundaries_fn=lambda: [circle_boundary(2.0)],
             annotations=["The domain is a two-variable section of a second-order cone constraint."],
-        ),
-        "socp-portfolio-risk": _make_socp(
-            "socp-portfolio-risk",
-            "SOCP: Linear Reward and Norm Budget",
-            "A linear reward objective pushes against a second-order norm budget.",
-            ["||(x, y)||_2 <= 1.5 - 0.3x + 0.15y"],
-            ((-1.5, 2.0), (-1.5, 2.0)),
-            np.array([-1.5, -0.9]),
-            np.array([0.0, 0.0]),
-            lambda: [],
         ),
     }

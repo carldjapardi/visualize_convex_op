@@ -3,20 +3,31 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getMethods, getProblems, solveProblem } from "./api";
 import { MethodSummary as MethodSummaryPanel } from "./components/MethodSummary";
 import { ProblemPlot } from "./components/ProblemPlot";
+import { TeachingPanel } from "./components/TeachingPanel";
+import { FAMILY_GUIDES } from "./teaching";
 import type { GeometryResponse, MethodId, MethodSummary, ProblemSummary, ProblemType, SolveResponse } from "./types";
 
-const PROBLEM_TYPES: Array<{ id: ProblemType; label: string; fullName: string; description: string }> = [
-  { id: "lp", label: "LP", fullName: "Linear programs", description: "Straight boundaries and a linear objective" },
-  { id: "qp", label: "QP", fullName: "Quadratic programs", description: "A curved objective with linear limits" },
-  { id: "qcqp", label: "QCQP", fullName: "Quadratically constrained", description: "Curved objectives and curved limits" },
-  { id: "socp", label: "SOCP", fullName: "Second-order cone", description: "Norm constraints and cone sections" },
-  { id: "sdp", label: "SDP", fullName: "Semidefinite programs", description: "A two-dimensional slice of PSD matrices" },
+const PROBLEM_TYPES: Array<{ id: ProblemType; label: string }> = [
+  { id: "lp", label: "LP" }, { id: "qp", label: "QP" }, { id: "qcqp", label: "QCQP" },
+  { id: "socp", label: "SOCP" }, { id: "sdp", label: "SDP" }, { id: "nonconvex", label: "NONCONVEX" },
 ];
+
+const START_PRESETS: Record<string, Array<{ label: string; point: [number, number] }>> = {
+  "nonconvex-double-well": [
+    { label: "Left basin", point: [-0.3, 1.15] }, { label: "Right basin", point: [0.3, 1.15] },
+  ],
+  "nonconvex-himmelblau": [
+    { label: "Center", point: [0, 0] }, { label: "Upper left", point: [-3, 3] }, { label: "Lower right", point: [3, -3] },
+  ],
+  "nonconvex-rippled-bowl": [
+    { label: "Outer ripple", point: [2.4, -1.8] }, { label: "Near center", point: [0.4, 0.4] },
+  ],
+};
 
 const DEFAULT_METHOD: MethodId = "simplex";
 
 function shortName(problem: ProblemSummary) {
-  return problem.name.replace(/^[A-Z]+:\s*/, "");
+  return problem.name.replace(/^[A-Za-z]+:\s*/, "");
 }
 
 export default function App() {
@@ -27,6 +38,8 @@ export default function App() {
   const [maxIterations, setMaxIterations] = useState(60);
   const [stepSize, setStepSize] = useState(0.12);
   const [seed, setSeed] = useState(7);
+  const [startPoint, setStartPoint] = useState<[number, number]>([0.5, 0.5]);
+  const [activeIndex, setActiveIndex] = useState(0);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [geometry, setGeometry] = useState<GeometryResponse | null>(null);
   const [result, setResult] = useState<SolveResponse | null>(null);
@@ -42,6 +55,11 @@ export default function App() {
         setProblems(problemList);
         setMethods(methodList);
         setSelectedProblemId(problemList[0]?.id ?? "lp-basic");
+        if (problemList[0]) {
+          setMaxIterations(problemList[0].default_max_iterations);
+          setStepSize(problemList[0].default_step_size);
+          setStartPoint(problemList[0].initial_point as [number, number]);
+        }
       })
       .catch((caught: Error) => {
         if (!cancelled) setError(caught.message);
@@ -54,7 +72,7 @@ export default function App() {
     [problems, selectedProblemId],
   );
   const selectedType = selectedProblem?.type ?? "lp";
-  const typeInfo = PROBLEM_TYPES.find((type) => type.id === selectedType) ?? PROBLEM_TYPES[0];
+  const familyGuide = FAMILY_GUIDES[selectedType];
   const examples = problems.filter((problem) => problem.type === selectedType);
   const compatibleMethods = methods.filter((method) => selectedProblem?.compatible_methods.includes(method.id));
   const selectedMethodSummary = compatibleMethods.find((method) => method.id === selectedMethod);
@@ -63,6 +81,8 @@ export default function App() {
     : !Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 500 ? "Iterations must be between 1 and 500."
     : !Number.isFinite(stepSize) || stepSize <= 0 || stepSize > 2 ? "Step size must be greater than 0 and at most 2."
     : !Number.isInteger(seed) || seed < 0 ? "Random seed must be a nonnegative whole number."
+    : selectedType === "nonconvex" && (!startPoint.every(Number.isFinite) || startPoint.some((value, index) => value < selectedProblem!.plot_bounds[index][0] || value > selectedProblem!.plot_bounds[index][1]))
+      ? "Keep the starting point inside the plotted window."
     : null;
 
   async function runSolve(problemId: string, method: MethodId) {
@@ -76,6 +96,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setActiveIndex(0);
     setGeometry((current) => current?.problem_id === problemId ? current : null);
     try {
       const response = await solveProblem({
@@ -84,9 +105,11 @@ export default function App() {
         max_iterations: usesSettings ? maxIterations : 60,
         step_size: usesSettings ? stepSize : 0.12,
         seed: usesSettings ? seed : 7,
+        start_point: selectedType === "nonconvex" ? startPoint : undefined,
       });
       if (currentRequest !== requestId.current) return;
       setResult(response);
+      setActiveIndex(Math.max(0, response.trace.length - 1));
       setGeometry(response.geometry);
       setSettingsDirty(false);
     } catch (caught) {
@@ -105,9 +128,21 @@ export default function App() {
     }
     void runSolve(selectedProblem.id, selectedMethod);
     return () => { requestId.current += 1; };
-    // Parameter edits are applied by the Run button; selecting a new problem or method runs automatically.
+    // Selecting a new problem or method runs immediately; parameter edits use the short debounce below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProblem, selectedMethod]);
+
+  useEffect(() => {
+    if (!settingsDirty || !selectedProblem) return;
+    if (settingsError) {
+      setLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => void runSolve(selectedProblem.id, selectedMethod), 320);
+    return () => window.clearTimeout(timer);
+    // Parameter changes recompute after a short pause; selection changes run immediately above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsDirty, maxIterations, stepSize, seed, startPoint, settingsError]);
 
   function selectType(type: ProblemType) {
     const first = problems.find((problem) => problem.type === type);
@@ -116,10 +151,18 @@ export default function App() {
 
   function selectProblem(problemId: string) {
     if (problemId === selectedProblemId) return;
+    const next = problems.find((problem) => problem.id === problemId);
     requestId.current += 1;
     setResult(null);
     setGeometry(null);
     setLoading(true);
+    setSettingsDirty(false);
+    setActiveIndex(0);
+    if (next) {
+      setMaxIterations(next.default_max_iterations);
+      setStepSize(next.default_step_size);
+      setStartPoint(next.initial_point as [number, number]);
+    }
     setSelectedProblemId(problemId);
   }
 
@@ -128,11 +171,24 @@ export default function App() {
     requestId.current += 1;
     setResult(null);
     setLoading(true);
+    setSettingsDirty(false);
+    setActiveIndex(0);
     setSelectedMethod(method);
   }
 
   function updateSetting(setter: (value: number) => void, value: number) {
+    requestId.current += 1;
+    setResult(null);
+    setLoading(true);
     setter(value);
+    setSettingsDirty(true);
+  }
+
+  function updateStartPoint(point: [number, number]) {
+    requestId.current += 1;
+    setResult(null);
+    setLoading(true);
+    setStartPoint(point);
     setSettingsDirty(true);
   }
 
@@ -140,20 +196,20 @@ export default function App() {
     <main className="app-shell">
       <header className="site-header">
         <div className="brand-mark" aria-hidden="true"><span /><span /><span /><span /></div>
-        <div className="brand-copy"><strong>OPTIMIZATION LAB</strong><span>Interactive convex optimization</span></div>
-        <span className="header-count">25 guided examples</span>
+        <div className="brand-copy"><strong>OPTIMIZATION LAB</strong><span>Interactive optimization</span></div>
+        <span className="header-count">{problems.length ? `${problems.length} guided examples` : "Loading examples"}</span>
       </header>
 
       <section className="hero">
         <div>
           <p className="eyebrow">LEARN BY EXPERIMENTING</p>
           <h1>See how an optimizer <em>finds its way.</em></h1>
-          <p className="hero-copy">Explore feasible regions, objective surfaces, and the steps a method takes toward a solution. Change the problem or method to see a new path.</p>
+          <p className="hero-copy">Explore feasible regions, loss surfaces, and the steps a method takes. Change the method, parameters, or starting point to see a new path.</p>
         </div>
         <div className="hero-key" aria-label="Visualization guide">
-          <span><i className="key-dot key-feasible" />Feasible region</span>
+          <span><i className="key-dot key-feasible" />{selectedType === "nonconvex" ? "Loss surface" : "Feasible region"}</span>
           <span><i className="key-dot key-path" />Method path</span>
-          <span><i className="key-dot key-boundary" />Constraint edge</span>
+          <span><i className="key-dot key-boundary" />{selectedType === "nonconvex" ? "Local valley" : "Constraint edge"}</span>
         </div>
       </section>
 
@@ -165,10 +221,10 @@ export default function App() {
             <h3>Problem family</h3>
             <div className="type-tabs" role="group" aria-label="Problem family">
               {PROBLEM_TYPES.map((type) => (
-                <button key={type.id} type="button" className={selectedType === type.id ? "type-tab active" : "type-tab"} aria-pressed={selectedType === type.id} title={type.fullName} onClick={() => selectType(type.id)}>{type.label}</button>
+                <button key={type.id} type="button" className={selectedType === type.id ? "type-tab active" : "type-tab"} aria-pressed={selectedType === type.id} title={FAMILY_GUIDES[type.id].name} onClick={() => selectType(type.id)}>{type.label}</button>
               ))}
             </div>
-            <p className="family-caption"><strong>{typeInfo.fullName}</strong> · {typeInfo.description}</p>
+            <p className="family-caption"><strong>{familyGuide.name}</strong> · {familyGuide.short}</p>
           </div>
 
           <div className="control-section">
@@ -195,21 +251,39 @@ export default function App() {
           </div>
 
           {hasSettings && (
-            <details className="settings-panel">
-              <summary>Method settings {settingsDirty && <span className="dirty-indicator">edited</span>}</summary>
-              <div className="settings-grid">
-                <label>Iterations<input min={1} max={500} type="number" value={maxIterations} onChange={(event) => updateSetting(setMaxIterations, Number(event.target.value))} /></label>
-                <label>Step size<input min={0.001} max={2} step={0.01} type="number" value={stepSize} onChange={(event) => updateSetting(setStepSize, Number(event.target.value))} /></label>
-                <label>Random seed<input min={0} type="number" value={seed} onChange={(event) => updateSetting(setSeed, Number(event.target.value))} /></label>
+            <div className="settings-panel" aria-label="Method parameters">
+              <strong className="parameter-heading">Tune the path {settingsDirty && <span className="dirty-indicator">updating…</span>}</strong>
+              <div className="parameter-control">
+                <label htmlFor="iteration-input">Iteration cap <span>{maxIterations}</span></label>
+                <input className="parameter-range" aria-label="Iteration cap slider" type="range" min={1} max={200} step={1} value={Math.min(maxIterations, 200)} onChange={(event) => updateSetting(setMaxIterations, Number(event.target.value))} />
+                <input id="iteration-input" type="number" min={1} max={500} value={maxIterations} onChange={(event) => updateSetting(setMaxIterations, Number(event.target.value))} />
               </div>
-            </details>
+              <div className="parameter-control">
+                <label htmlFor="step-input">Step size α <span>{stepSize}</span></label>
+                <input className="parameter-range" aria-label="Step size slider" type="range" min={0.005} max={0.3} step={0.005} value={Math.min(Math.max(stepSize, 0.005), 0.3)} onChange={(event) => updateSetting(setStepSize, Number(event.target.value))} />
+                <input id="step-input" type="number" min={0.001} max={2} step={0.005} value={stepSize} onChange={(event) => updateSetting(setStepSize, Number(event.target.value))} />
+              </div>
+              {selectedMethod === "sgd" && <label className="seed-control">Random seed<input min={0} type="number" value={seed} onChange={(event) => updateSetting(setSeed, Number(event.target.value))} /></label>}
+              {selectedType === "nonconvex" && selectedProblem && (
+                <div className="start-controls">
+                  <strong>Starting point</strong>
+                  <div className="start-inputs">
+                    <label>x<input aria-label="Starting x" type="number" step={0.1} min={selectedProblem.plot_bounds[0][0]} max={selectedProblem.plot_bounds[0][1]} value={startPoint[0]} onChange={(event) => updateStartPoint([Number(event.target.value), startPoint[1]])} /></label>
+                    <label>y<input aria-label="Starting y" type="number" step={0.1} min={selectedProblem.plot_bounds[1][0]} max={selectedProblem.plot_bounds[1][1]} value={startPoint[1]} onChange={(event) => updateStartPoint([startPoint[0], Number(event.target.value)])} /></label>
+                  </div>
+                  <div className="start-presets">
+                    {(START_PRESETS[selectedProblem.id] ?? []).map((preset) => <button key={preset.label} type="button" onClick={() => updateStartPoint(preset.point)}>{preset.label}</button>)}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
           {settingsError && <p className="settings-error" role="alert">{settingsError}</p>}
 
           <button className="run-button" type="button" disabled={!selectedProblem || loading || Boolean(settingsError)} onClick={() => selectedProblem && void runSolve(selectedProblem.id, selectedMethod)}>
-            {loading ? "Computing path…" : settingsDirty ? "Apply settings & run" : "Run this method"}<span aria-hidden="true">↗</span>
+            {loading ? "Computing path…" : "Run this method"}<span aria-hidden="true">↗</span>
           </button>
-          <p className="run-hint">Selecting an example or method runs it automatically.</p>
+          <p className="run-hint">Examples, methods, and parameters update the path automatically.</p>
           {error && <div className="error-box" role="alert">{error}</div>}
         </aside>
 
@@ -227,8 +301,20 @@ export default function App() {
             </section>
           )}
 
+          {selectedProblem && (
+            <TeachingPanel
+              family={selectedType} method={selectedMethod}
+              methodName={selectedMethodSummary?.name ?? "Method"}
+              stepSize={stepSize} result={result} activeIndex={activeIndex}
+            />
+          )}
+
           <section className="visual-card card" aria-label="Optimization visualization">
-            <ProblemPlot geometry={geometry} result={result} loading={loading} />
+            <ProblemPlot
+              problemId={selectedProblemId} problemType={selectedType}
+              geometry={geometry} result={result} loading={loading}
+              activeIndex={activeIndex} onIndexChange={setActiveIndex}
+            />
           </section>
 
           <MethodSummaryPanel result={result} loading={loading} />

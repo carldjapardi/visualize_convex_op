@@ -64,6 +64,10 @@ class ProblemDefinition:
             constraints=self.constraints,
             objective_expression=self.objective_expression,
             learning_goal=self.learning_goal,
+            initial_point=self.initial_point.tolist(),
+            plot_bounds=[list(axis) for axis in self.bounds],
+            default_step_size=self.default_step_size,
+            default_max_iterations=self.default_max_iterations,
         )
 
     def boundaries(self) -> list[dict[str, Any]]:

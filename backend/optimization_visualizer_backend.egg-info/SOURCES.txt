@@ -10,6 +10,7 @@ app/problem_catalog/__init__.py
 app/problem_catalog/catalog.py
 app/problem_catalog/helpers.py
 app/problem_catalog/lp.py
+app/problem_catalog/nonconvex.py
 app/problem_catalog/qcqp.py
 app/problem_catalog/qp.py
 app/problem_catalog/sdp.py

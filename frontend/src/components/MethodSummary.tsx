@@ -18,6 +18,7 @@ export function MethodSummary({ result, loading }: { result: SolveResponse | nul
   const final = result.trace[result.trace.length - 1];
   const bestIteration = result.variables.best_iteration;
   const isFirstOrder = typeof bestIteration === "number";
+  const isNonconvex = result.problem.type === "nonconvex";
   const violation = final?.violation ?? Number.NaN;
   const pathViolates = result.trace.some((point) => point.violation > 1e-5);
   const statusClass = result.status === "optimal" ? "status-good" : result.status === "approximate" ? "status-approximate" : "status-warning";
@@ -31,9 +32,9 @@ export function MethodSummary({ result, loading }: { result: SolveResponse | nul
         <span className={"status-pill " + statusClass}>{result.status.replace(/_/g, " ")}</span>
       </div>
       <div className="result-metrics">
-        <div><span>{isFirstOrder ? "BEST OBJECTIVE" : "OBJECTIVE"}</span><strong>{formatNumber(result.objective_value)}</strong></div>
+        <div><span>{isNonconvex ? "BEST LOSS" : isFirstOrder ? "BEST OBJECTIVE" : "OBJECTIVE"}</span><strong>{formatNumber(result.objective_value)}</strong></div>
         <div><span>STEPS</span><strong>{result.iterations}</strong></div>
-        <div><span>{isFirstOrder ? "PATH" : "FEASIBILITY"}</span><strong>{isFirstOrder ? pathViolates ? "Leaves feasible set" : "Feasible" : Number.isNaN(violation) ? "—" : violation <= 1e-5 ? "Satisfied" : "Violated"}</strong></div>
+        <div><span>{isNonconvex ? "LANDSCAPE" : isFirstOrder ? "PATH" : "FEASIBILITY"}</span><strong>{isNonconvex ? "Local search" : isFirstOrder ? pathViolates ? "Leaves feasible set" : "Feasible" : Number.isNaN(violation) ? "—" : violation <= 1e-5 ? "Satisfied" : "Violated"}</strong></div>
       </div>
       <p className="result-message">{result.message}</p>
       {Array.isArray(eigenvalues) && Array.isArray(matrix) && (
@@ -43,6 +44,7 @@ export function MethodSummary({ result, loading }: { result: SolveResponse | nul
         </div>
       )}
       {isFirstOrder && <p className="accuracy-note">Best visited point: iteration {bestIteration}. The path inspector shows the selected step.</p>}
+      {isNonconvex && <p className="accuracy-note">This path does not certify a global minimum. Try another starting point to compare basins.</p>}
       {result.status === "approximate" && <p className="accuracy-note">This in-repo reference is an educational approximation, not a certified optimum.</p>}
       <details className="raw-result"><summary>Inspect numerical output</summary><pre>{JSON.stringify(result.variables, null, 2)}</pre></details>
     </section>

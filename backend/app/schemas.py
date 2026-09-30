@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-ProblemType = Literal["lp", "qp", "qcqp", "socp", "sdp"]
+ProblemType = Literal["lp", "qp", "qcqp", "socp", "sdp", "nonconvex"]
 MethodId = Literal["simplex", "interior_point", "gd", "sgd", "pgd", "newton"]
 
 
@@ -20,6 +20,10 @@ class ProblemSummary(BaseModel):
     constraints: list[str]
     objective_expression: str
     learning_goal: str
+    initial_point: list[float]
+    plot_bounds: list[list[float]]
+    default_step_size: float
+    default_max_iterations: int
 
 
 class MethodSummary(BaseModel):
@@ -35,6 +39,7 @@ class SolveRequest(BaseModel):
     max_iterations: int = Field(default=60, ge=1, le=500)
     step_size: float = Field(default=0.12, gt=0, le=2)
     seed: int = Field(default=7, ge=0)
+    start_point: tuple[float, float] | None = None
 
 
 class GeometryRequest(BaseModel):

@@ -8,6 +8,7 @@ TYPE_ALLOWED_METHODS: dict[ProblemType, frozenset[MethodId]] = {
     "qcqp": frozenset({"interior_point", "gd", "sgd", "pgd", "newton"}),
     "socp": frozenset({"interior_point"}),
     "sdp": frozenset({"interior_point"}),
+    "nonconvex": frozenset({"gd", "sgd", "newton"}),
 }
 
 

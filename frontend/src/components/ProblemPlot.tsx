@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
 import type { Data, Layout } from "plotly.js";
 
-import type { GeometryResponse, Iterate, SolveResponse } from "../types";
+import type { GeometryResponse, Iterate, ProblemType, SolveResponse } from "../types";
 
 type PlotProps = {
   className?: string;
@@ -24,17 +24,18 @@ const PATH = "#ec744d";
 const EDGE = "#bc6044";
 
 export function ProblemPlot({
-  geometry,
-  result,
-  loading,
+  problemId, problemType, geometry, result, loading, activeIndex, onIndexChange,
 }: {
+  problemId: string;
+  problemType: ProblemType;
   geometry: GeometryResponse | null;
   result: SolveResponse | null;
   loading: boolean;
+  activeIndex: number;
+  onIndexChange: (index: number) => void;
 }) {
   const { Plot, error } = usePlotlyComponent();
-  const [view, setView] = useState<PlotView>("contours");
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [view, setView] = useState<PlotView>(() => defaultView(problemType));
   const [compact, setCompact] = useState(() => window.matchMedia("(max-width: 700px)").matches);
   const inspectorRef = useRef<HTMLElement | null>(null);
 
@@ -45,9 +46,7 @@ export function ProblemPlot({
     return () => query.removeEventListener("change", update);
   }, []);
 
-  useLayoutEffect(() => {
-    setActiveIndex(Math.max(0, (result?.trace.length ?? 1) - 1));
-  }, [result]);
+  useEffect(() => setView(defaultView(problemType)), [problemId, problemType]);
 
   const trace = result?.trace ?? [];
   const index = Math.min(activeIndex, Math.max(0, trace.length - 1));
@@ -67,7 +66,7 @@ export function ProblemPlot({
       <div className="plot-toolbar">
         <div>
           <span className="section-number">02</span>
-          <div><h2>Explore the geometry</h2><p>{viewDescription(view)}</p></div>
+          <div><h2>Explore the geometry</h2><p>{viewDescription(view, problemType)}</p></div>
         </div>
         <div className="view-switch" role="group" aria-label="Visualization view">
           {VIEWS.map((option) => (
@@ -112,26 +111,28 @@ export function ProblemPlot({
                   max={trace.length - 1}
                   value={index}
                   aria-label="Iteration"
-                  onChange={(event) => setActiveIndex(Number(event.target.value))}
+                  onChange={(event) => onIndexChange(Number(event.target.value))}
                 />
                 <div className="iteration-actions">
-                  <button type="button" onClick={() => setActiveIndex(0)} disabled={index === 0}>Start</button>
-                  <button type="button" onClick={() => setActiveIndex(trace.length - 1)} disabled={index === trace.length - 1}>Final step</button>
+                  <button type="button" onClick={() => onIndexChange(0)} disabled={index === 0}>Start</button>
+                  <button type="button" onClick={() => onIndexChange(Math.max(0, index - 1))} disabled={index === 0}>← Previous</button>
+                  <button type="button" onClick={() => onIndexChange(Math.min(trace.length - 1, index + 1))} disabled={index === trace.length - 1}>Next →</button>
+                  <button type="button" onClick={() => onIndexChange(trace.length - 1)} disabled={index === trace.length - 1}>Final step</button>
                 </div>
                 <dl className="point-metrics">
-                  <div><dt>Objective</dt><dd>{formatNumber(current.objective)}</dd></div>
-                  <div><dt>Violation</dt><dd className={current.violation > 1e-5 ? "metric-alert" : ""}>{formatNumber(current.violation)}</dd></div>
+                  <div><dt>{problemType === "nonconvex" ? "Loss" : "Objective"}</dt><dd>{formatNumber(current.objective)}</dd></div>
+                  <div><dt>{problemType === "nonconvex" ? "Step length" : "Violation"}</dt><dd className={current.violation > 1e-5 ? "metric-alert" : ""}>{formatNumber(problemType === "nonconvex" ? current.step_norm : current.violation)}</dd></div>
                   <div><dt>{geometry.problem_type === "sdp" ? "a, b" : "x, y"}</dt><dd>{current.x.map(formatNumber).join(", ")}</dd></div>
                 </dl>
                 {current.violation > 1e-5 && <p className="violation-note">This step lies outside the feasible region.</p>}
               </>
             ) : (
-              <div className="inspector-empty">Run a method to reveal its path. The colored region contains points that meet every constraint.</div>
+              <div className="inspector-empty">Run a method to reveal its path. {problemType === "nonconvex" ? "Try another start to compare destinations." : "The colored region contains points that meet every constraint."}</div>
             )}
             <div className="inspector-legend">
-              <span><i className={view === "surface" ? "legend-swatch feasible-surface" : "legend-swatch feasible"} />Feasible</span>
+              <span><i className={view === "surface" ? "legend-swatch feasible-surface" : "legend-swatch feasible"} />{problemType === "nonconvex" ? "Landscape" : "Feasible"}</span>
               <span><i className="legend-swatch path" />Method path</span>
-              {view !== "surface" && <span><i className="legend-swatch boundary" />Boundary</span>}
+              {view !== "surface" && problemType !== "nonconvex" && <span><i className="legend-swatch boundary" />Boundary</span>}
             </div>
           </aside>
         </div>
@@ -144,6 +145,7 @@ export function ProblemPlot({
 }
 
 function buildPlanarTraces(geometry: GeometryResponse, path: Iterate[], view: PlotView): Data[] {
+  const isNonconvex = geometry.problem_type === "nonconvex";
   const traces: Data[] = view === "value-map"
     ? [
         {
@@ -151,10 +153,10 @@ function buildPlanarTraces(geometry: GeometryResponse, path: Iterate[], view: Pl
           colorscale: "Viridis", colorbar: { title: { text: "objective" } },
           hovertemplate: "x=%{x}<br>y=%{y}<br>f=%{z:.3f}<extra></extra>",
         } as Data,
-        feasibleRegionTrace(geometry, 0.25),
+        ...(!isNonconvex ? [feasibleRegionTrace(geometry, 0.25)] : []),
       ]
     : [
-        feasibleRegionTrace(geometry, 0.27),
+        ...(!isNonconvex ? [feasibleRegionTrace(geometry, 0.27)] : []),
         {
           type: "contour", x: geometry.x, y: geometry.y, z: geometry.objective,
           contours: { coloring: "lines", showlabels: true, labelfont: { color: INK, size: 11 } },
@@ -190,10 +192,17 @@ function buildPlanarTraces(geometry: GeometryResponse, path: Iterate[], view: Pl
 function buildSurfaceTraces(geometry: GeometryResponse, path: Iterate[], compact: boolean): Data[] {
   const [low, high] = feasibleRange(geometry);
   const pathLift = Math.max(0.08, (high - low) * 0.025);
+  const isNonconvex = geometry.problem_type === "nonconvex";
   const feasibleZ = geometry.objective.map((row, y) =>
     row.map((value, x) => geometry.feasible[y]?.[x] ? value : null),
   );
-  const traces: Data[] = [
+  const traces: Data[] = isNonconvex ? [{
+    type: "surface", x: geometry.x, y: geometry.y, z: geometry.objective,
+    colorscale: "Viridis", opacity: 0.94, showscale: !compact,
+    colorbar: { title: { text: "loss" }, tickfont: { color: INK } },
+    hovertemplate: "x=%{x}<br>y=%{y}<br>loss=%{z:.3f}<extra></extra>",
+    name: "Loss surface",
+  } as Data] : [
     {
       type: "surface", x: geometry.x, y: geometry.y, z: geometry.objective,
       colorscale: [[0, "#d9e0df"], [1, "#aab8b5"]], opacity: 0.33,
@@ -260,7 +269,7 @@ function planarLayout(geometry: GeometryResponse, view: PlotView, compact: boole
 }
 
 function surfaceLayout(geometry: GeometryResponse, compact: boolean): Partial<Layout> {
-  const [low, high] = feasibleRange(geometry);
+  const [low, high] = objectiveRange(geometry);
   const margin = Math.max(0.5, (high - low) * 0.16);
   return {
     autosize: true, height: compact ? 460 : 610, uirevision: geometry.problem_id,
@@ -272,8 +281,10 @@ function surfaceLayout(geometry: GeometryResponse, compact: boolean): Partial<La
       bgcolor: "#fff", aspectmode: "manual", aspectratio: { x: 1, y: 1, z: 0.68 },
       xaxis: sceneAxis(geometry.problem_type === "sdp" ? "a = X₀₀" : "x"),
       yaxis: sceneAxis(geometry.problem_type === "sdp" ? "b = X₀₁" : "y"),
-      zaxis: { ...sceneAxis("objective"), range: [low - margin, high + margin] },
-      camera: { eye: compact ? { x: 1.45, y: 1.55, z: 1.1 } : { x: 1.2, y: 1.35, z: 0.9 } },
+      zaxis: { ...sceneAxis(geometry.problem_type === "nonconvex" ? "loss" : "objective"), range: [low - margin, high + margin] },
+      camera: { eye: geometry.problem_type === "nonconvex"
+        ? { x: 1.15, y: 1.3, z: 1.65 }
+        : compact ? { x: 1.45, y: 1.55, z: 1.1 } : { x: 1.2, y: 1.35, z: 1.15 } },
     },
   };
 }
@@ -282,6 +293,11 @@ function feasibleRange(geometry: GeometryResponse): [number, number] {
   const values = geometry.objective.flatMap((row, y) =>
     row.filter((value, x): value is number => Boolean(geometry.feasible[y]?.[x]) && value !== null),
   );
+  return values.length ? [Math.min(...values), Math.max(...values)] : [0, 1];
+}
+
+function objectiveRange(geometry: GeometryResponse): [number, number] {
+  const values = geometry.objective.flatMap((row) => row.filter((value): value is number => value !== null));
   return values.length ? [Math.min(...values), Math.max(...values)] : [0, 1];
 }
 
@@ -300,10 +316,18 @@ function sceneAxis(title: string) {
   };
 }
 
-function viewDescription(view: PlotView) {
-  if (view === "surface") return "Drag to rotate. Height is objective value (lower is better); the orange path is raised for visibility.";
-  if (view === "value-map") return "Color shows objective value; the green overlay satisfies every constraint.";
-  return "Curves connect equal objective values. The green area satisfies every constraint.";
+function defaultView(type: ProblemType): PlotView {
+  return ["qp", "qcqp", "nonconvex"].includes(type) ? "surface" : "contours";
+}
+
+function viewDescription(view: PlotView, type: ProblemType) {
+  if (view === "surface") return `Drag to rotate. Height is ${type === "nonconvex" ? "loss" : "objective value"} (lower is better); the orange path is raised for visibility.`;
+  if (view === "value-map") return type === "nonconvex"
+    ? "Color shows loss across the plotted window; compare the separate valleys."
+    : "Color shows objective value; the green overlay satisfies every constraint.";
+  return type === "nonconvex"
+    ? "Curves connect equal loss values; closed rings reveal local valleys."
+    : "Curves connect equal objective values. The green area satisfies every constraint.";
 }
 
 function HistoryPlot({
@@ -312,6 +336,7 @@ function HistoryPlot({
   Plot: PlotComponent; result: SolveResponse; activeIteration: number;
 }) {
   const iterations = result.trace.map((point) => point.iteration);
+  const valueLabel = result.problem.type === "nonconvex" ? "Loss" : "Objective";
   const hasViolation = result.trace.some((point) => point.violation > 1e-5);
   const data: Data[] = [{
     type: "scatter", mode: "lines", x: iterations,
@@ -327,7 +352,7 @@ function HistoryPlot({
   }
   return (
     <div className="history-section">
-      <div className="history-heading"><h3>Across the run</h3><p>Objective value{hasViolation ? " and constraint violation" : ""} at each iteration.</p></div>
+      <div className="history-heading"><h3>Across the run</h3><p>{valueLabel} value{hasViolation ? " and constraint violation" : ""} at each iteration.</p></div>
       <Plot
         className="history-plot" data={data} useResizeHandler
         style={{ width: "100%", height: "100%" }}
@@ -336,7 +361,7 @@ function HistoryPlot({
           margin: { l: 62, r: hasViolation ? 62 : 20, t: 14, b: 44 },
           paper_bgcolor: "#fff", plot_bgcolor: "#fff",
           font: { color: INK, family: "Inter, system-ui, sans-serif" },
-          xaxis: axis("iteration"), yaxis: axis("objective"),
+          xaxis: axis("iteration"), yaxis: axis(valueLabel.toLowerCase()),
           yaxis2: { ...axis("violation"), overlaying: "y", side: "right", showgrid: false },
           legend: { orientation: "h", y: 1.26 },
           shapes: [{

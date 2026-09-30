@@ -13,11 +13,11 @@ def _lp_boundaries_basic() -> list[dict[str, object]]:
     ]
 
 
-def _lp_boundaries_warehouse() -> list[dict[str, object]]:
+def _lp_boundaries_ratio() -> list[dict[str, object]]:
     return [
-        {"name": "2x + y = 8", "x": [2, 4], "y": [4, 0]},
-        {"name": "x + 3y = 9", "x": [0, 4.2], "y": [3, 1.6]},
-        {"name": "x = 3.5", "x": [3.5, 3.5], "y": [0, 1]},
+        {"name": "x + y = 5", "x": [0, 5], "y": [5, 0]},
+        {"name": "y = 0.5x", "x": [0, 5], "y": [0, 2.5]},
+        {"name": "y = 3", "x": [0, 5], "y": [3, 3]},
     ]
 
 
@@ -29,17 +29,20 @@ def _lp_boundaries_diet() -> list[dict[str, object]]:
     ]
 
 
-def _lp_boundaries_transport() -> list[dict[str, object]]:
+def _lp_boundaries_delivery() -> list[dict[str, object]]:
     return [
+        {"name": "x + y = 4", "x": [0, 4], "y": [4, 0]},
         {"name": "x + y = 5", "x": [0, 5], "y": [5, 0]},
-        {"name": "2x + y = 7", "x": [0, 3.5], "y": [7, 0]},
+        {"name": "x = 3", "x": [3, 3], "y": [0, 5]},
+        {"name": "y = 3.5", "x": [0, 5], "y": [3.5, 3.5]},
     ]
 
 
-def _lp_boundaries_flow() -> list[dict[str, object]]:
+def _lp_boundaries_alternate() -> list[dict[str, object]]:
     return [
-        {"name": "x + 2y = 6", "x": [0, 6], "y": [3, 0]},
-        {"name": "3x + y = 6", "x": [0, 2], "y": [6, 0]},
+        {"name": "x + y = 4", "x": [0, 4], "y": [4, 0]},
+        {"name": "x = 3.2", "x": [3.2, 3.2], "y": [0, 4]},
+        {"name": "y = 2.7", "x": [0, 4], "y": [2.7, 2.7]},
     ]
 
 
@@ -71,36 +74,35 @@ def build_lp_problems() -> dict[str, ProblemDefinition]:
                 bounds=[(0.0, 3.0), (0.0, 2.0)],
             ),
         ),
-        "lp-warehouse": ProblemDefinition(
-            id="lp-warehouse",
+        "lp-ratio-blend": ProblemDefinition(
+            id="lp-ratio-blend",
             type="lp",
-            name="LP: Warehouse Allocation",
-            description="A linear program with two shared resource budgets and a different optimal corner.",
+            name="LP: Ratio-Constrained Blend",
+            description="Choose two ingredients while keeping at least one unit of y for every two units of x.",
             dimension=2,
             variables=["x", "y"],
             compatible_methods=["simplex", "interior_point"],
-            constraints=["x >= 0", "y >= 0", "2x + y <= 8", "x + 3y <= 9", "x <= 3.5"],
-            bounds=((-0.4, 4.4), (-0.4, 4.2)),
-            initial_point=np.array([0.6, 0.6]),
-            objective=lambda x: float(-4.0 * x[0] - 3.0 * x[1]),
-            gradient=lambda _: np.array([-4.0, -3.0]),
+            constraints=["x >= 0", "y >= 0", "x + y <= 5", "y >= 0.5x", "y <= 3"],
+            bounds=((-0.4, 5.4), (-0.4, 3.5)),
+            initial_point=np.array([1.0, 1.0]),
+            objective=lambda x: float(-4.0 * x[0] - 2.0 * x[1]),
+            gradient=lambda _: np.array([-4.0, -2.0]),
             feasible=lambda x: bool(
                 x[0] >= -1e-9
                 and x[1] >= -1e-9
-                and 2.0 * x[0] + x[1] <= 8.0 + 1e-9
-                and x[0] + 3.0 * x[1] <= 9.0 + 1e-9
-                and x[0] <= 3.5 + 1e-9
+                and x.sum() <= 5.0 + 1e-9
+                and x[1] >= 0.5 * x[0] - 1e-9
+                and x[1] <= 3.0 + 1e-9
             ),
             violation=lambda x: float(
-                max(0.0, -x[0], -x[1], 2.0 * x[0] + x[1] - 8.0, x[0] + 3.0 * x[1] - 9.0, x[0] - 3.5)
+                max(0.0, -x[0], -x[1], x.sum() - 5.0, 0.5 * x[0] - x[1], x[1] - 3.0)
             ),
-            project=lambda x: np.array([min(max(x[0], 0.0), 3.5), max(x[1], 0.0)]),
-            boundaries_fn=_lp_boundaries_warehouse,
+            boundaries_fn=_lp_boundaries_ratio,
             lp_data=LPData(
-                c=np.array([-4.0, -3.0]),
-                a_ub=np.array([[2.0, 1.0], [1.0, 3.0]]),
-                b_ub=np.array([8.0, 9.0]),
-                bounds=[(0.0, 3.5), (0.0, None)],
+                c=np.array([-4.0, -2.0]),
+                a_ub=np.array([[1.0, 1.0], [0.5, -1.0]]),
+                b_ub=np.array([5.0, 0.0]),
+                bounds=[(0.0, None), (0.0, 3.0)],
             ),
         ),
         "lp-diet": ProblemDefinition(
@@ -134,54 +136,57 @@ def build_lp_problems() -> dict[str, ProblemDefinition]:
                 bounds=[(0.0, None), (0.0, None)],
             ),
         ),
-        "lp-transport": ProblemDefinition(
-            id="lp-transport",
+        "lp-delivery-window": ProblemDefinition(
+            id="lp-delivery-window",
             type="lp",
-            name="LP: Transport Balance",
-            description="Ship goods along two routes with balance caps and a total shipment limit.",
+            name="LP: Delivery Window",
+            description="Meet a minimum shipment without exceeding a maximum, then choose the cheaper route mix.",
             dimension=2,
             variables=["route 1", "route 2"],
             compatible_methods=["simplex", "interior_point"],
-            constraints=["x >= 0", "y >= 0", "x + y <= 5", "2x + y <= 7"],
-            bounds=((-0.4, 5.5), (-0.4, 5.5)),
-            initial_point=np.array([0.8, 0.8]),
-            objective=lambda x: float(-5.0 * x[0] - 4.0 * x[1]),
-            gradient=lambda _: np.array([-5.0, -4.0]),
+            constraints=["x >= 0", "y >= 0", "4 <= x + y <= 5", "x <= 3", "y <= 3.5"],
+            bounds=((-0.4, 5.4), (-0.4, 5.4)),
+            initial_point=np.array([2.0, 2.5]),
+            objective=lambda x: float(2.0 * x[0] + 4.0 * x[1]),
+            gradient=lambda _: np.array([2.0, 4.0]),
             feasible=lambda x: bool(
-                x[0] >= -1e-9 and x[1] >= -1e-9 and x.sum() <= 5 + 1e-9 and 2 * x[0] + x[1] <= 7 + 1e-9
+                x[0] >= -1e-9 and x[1] >= -1e-9 and 4 - 1e-9 <= x.sum() <= 5 + 1e-9
+                and x[0] <= 3 + 1e-9 and x[1] <= 3.5 + 1e-9
             ),
-            violation=lambda x: float(max(0.0, -x[0], -x[1], x.sum() - 5, 2 * x[0] + x[1] - 7)),
-            boundaries_fn=_lp_boundaries_transport,
+            violation=lambda x: float(max(0.0, -x[0], -x[1], 4 - x.sum(), x.sum() - 5, x[0] - 3, x[1] - 3.5)),
+            boundaries_fn=_lp_boundaries_delivery,
             lp_data=LPData(
-                c=np.array([-5.0, -4.0]),
-                a_ub=np.array([[1.0, 1.0], [2.0, 1.0]]),
-                b_ub=np.array([5.0, 7.0]),
-                bounds=[(0.0, None), (0.0, None)],
+                c=np.array([2.0, 4.0]),
+                a_ub=np.array([[-1.0, -1.0], [1.0, 1.0]]),
+                b_ub=np.array([-4.0, 5.0]),
+                bounds=[(0.0, 3.0), (0.0, 3.5)],
             ),
         ),
-        "lp-max-flow-slice": ProblemDefinition(
-            id="lp-max-flow-slice",
+        "lp-alternate-optima": ProblemDefinition(
+            id="lp-alternate-optima",
             type="lp",
-            name="LP: Max Flow Slice",
-            description="A 2D capacity slice of a flow problem with intersecting linear caps.",
+            name="LP: Alternate Optima",
+            description="The objective lines up with one feasible edge, so many allocations tie for best.",
             dimension=2,
-            variables=["flow x", "flow y"],
+            variables=["allocation x", "allocation y"],
             compatible_methods=["simplex", "interior_point"],
-            constraints=["x >= 0", "y >= 0", "x + 2y <= 6", "3x + y <= 6"],
-            bounds=((-0.4, 3.5), (-0.4, 3.5)),
-            initial_point=np.array([0.4, 0.4]),
+            constraints=["x >= 0", "y >= 0", "x + y <= 4", "x <= 3.2", "y <= 2.7"],
+            bounds=((-0.4, 4.4), (-0.4, 4.0)),
+            initial_point=np.array([1.0, 1.0]),
+            annotations=["Every point on the segment from (1.3, 2.7) to (3.2, 0.8) has objective −4."],
             objective=lambda x: float(-x[0] - x[1]),
             gradient=lambda _: np.array([-1.0, -1.0]),
             feasible=lambda x: bool(
-                x[0] >= -1e-9 and x[1] >= -1e-9 and x[0] + 2 * x[1] <= 6 + 1e-9 and 3 * x[0] + x[1] <= 6 + 1e-9
+                x[0] >= -1e-9 and x[1] >= -1e-9 and x.sum() <= 4 + 1e-9
+                and x[0] <= 3.2 + 1e-9 and x[1] <= 2.7 + 1e-9
             ),
-            violation=lambda x: float(max(0.0, -x[0], -x[1], x[0] + 2 * x[1] - 6, 3 * x[0] + x[1] - 6)),
-            boundaries_fn=_lp_boundaries_flow,
+            violation=lambda x: float(max(0.0, -x[0], -x[1], x.sum() - 4, x[0] - 3.2, x[1] - 2.7)),
+            boundaries_fn=_lp_boundaries_alternate,
             lp_data=LPData(
                 c=np.array([-1.0, -1.0]),
-                a_ub=np.array([[1.0, 2.0], [3.0, 1.0]]),
-                b_ub=np.array([6.0, 6.0]),
-                bounds=[(0.0, None), (0.0, None)],
+                a_ub=np.array([[1.0, 1.0]]),
+                b_ub=np.array([4.0]),
+                bounds=[(0.0, 3.2), (0.0, 2.7)],
             ),
         ),
     }
